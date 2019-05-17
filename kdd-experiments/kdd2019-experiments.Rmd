@@ -1,0 +1,622 @@
+---
+title: "Significance of patterns in data visualisations"
+output: html_notebook
+---
+
+```{r load_init}
+rm(list=ls())
+source("code/minpmaxt.R")
+source("code/utilities.R")
+source("code/functions.R")
+randseed <- 42
+
+check_if_packages_are_present(required_packages = c("scagnostics", "sp", "rmarkdown", "rpart"))
+
+library(rpart)
+library(scagnostics) # requires rJava which in turn requires Java Development Kit. 
+library(sp)
+```
+
+This notebook reproduces the experiments in the KDD paper *Significance of Patterns in Data Visualisations* (https://doi.org/10.1145/3292500.3330994). The experiments were run in R 3.5.2 on a MacBook Pro.
+
+# Motivating Example 1
+
+This simple example illustrates that it is in fact possible to have a statistical test with visual patterns. Here the visual pattern is the highest value of the time series.
+
+## Figures 1a and 1b
+
+We plot the hourly average CO concentration for 1 day. 
+
+```{r load_motiv_ex_1, fig.width=4, fig.height=2}
+AQ <- readAQ()
+AQ_time <- AQ$time
+AQ_CO <- scale(AQ$CO.GT.)[,1]
+
+ind_day1 <- 343:366
+x_day1 <- AQ_time[ind_day1]
+y_day1 <- AQ_CO[ind_day1]
+
+set.seed(randseed)
+
+x_test <- seq(from = x_day1[1],
+              to = x_day1[length(x_day1)],
+              length.out = length(x_day1))
+
+x_train <- x_day1[c(20)]
+y_train <- y_day1[c(20)]
+
+length_scale <- 3600*6
+
+gp1 <- GP(x_test, x_train, y_train, kern = function(x, y) kernel_sqexp(x, y, l = length_scale))
+f_prior <- gp1$prior(25)
+f_post <- gp1$post(25)
+
+fig1a <- function() plottime(x_day1, y_day1, 
+                             x_test, f_prior, 
+                             ylim = range(c(y_day1, f_post, f_prior)), 
+                             mar = c(2, 1, 0, 1) + 0.1)
+fig1b <- function() plottime(x_day1, y_day1, 
+                             x_test, f_post, 
+                             ylim = range(c(y_day1, f_post, f_prior)), 
+                             mar = c(2, 1, 0, 1) + 0.1)
+
+fig1a()
+fig1b()
+```
+
+We run a statistical test: 
+
+* test statistics are the values of the time series at every point (multiple test statistics = multiple hypotheses). 
+* the null distribution is a Gaussian process with a length scale of 6 hours (two GPs are considered: one unconstrained and one constrained). 
+* we use minP as a multiple hypotheses correction.
+
+We run the test after adding a constraint on the highest point to demonstrate that it is no longer significant. 
+
+```{r}
+set.seed(randseed)
+
+# uc: Unconstrained
+test_ts_uc <- tester(y_day1, 
+                     nresample = 1000, 
+                     test_stat = function(x) x, 
+                     sample_from_null = function() gp1$prior(1)[,1])
+
+# c: Constrained
+test_ts_c <- tester(y_day1, 
+                    nresample = 1000, 
+                    test_stat = function(x) x, 
+                    sample_from_null = function() gp1$post(1)[,1])
+```
+
+The highest point at 19:00 is indeed significant (pval_prior = 0.1). 
+
+When we add a constraint on it, it is no longer significant (pval_post = 0.99). 
+
+```{r}
+set.seed(randseed)
+
+test_ts_uc_pvadj <- minP(test_ts_uc$t0, t(test_ts_uc$t))
+test_ts_c_pvadj <- minP(test_ts_c$t0, t(test_ts_c$t))
+
+data.frame(time = as.POSIXlt(x_test, origin="1970-01-01"), 
+           pval_prior = round(test_ts_uc_pvadj, 2), 
+           pval_post = round(test_ts_c_pvadj, 2))
+```
+
+```{r fig1_pdf, message=FALSE}
+savePDF("figures/fig1a.pdf", fig1a(), width = 4, height = 2)
+savePDF("figures/fig1b.pdf", fig1b(), width = 4, height = 2)
+```
+
+# Motivating Example 2 - Adult data
+
+```{r}
+set.seed(randseed)
+adult <- readRDS("data/adult.rds")
+adult_rp <- rpart(income~.,adult)
+```
+```{r }
+is_married <- adult[, "relationship"] %in% c("Husband", "Wife")
+is_highly_educated <- adult[, "education"] %in% c("Bachelors", "Doctorate", "Masters", "Prof-school")
+adult <- data.frame(adult, 
+                    married = factor(ifelse(is_married, "married", "notmarried"), 
+                                     levels=c("notmarried", "married")), 
+                    educated = factor(ifelse(is_highly_educated, "higheducation", "loweducation"), 
+                                      levels=c("loweducation", "higheducation")))
+idx_adult <- sample.int(dim(adult)[1],2*90)
+sadult <- adult[idx_adult[1:90],]
+sadult2 <- adult[idx_adult[-(1:90)],]
+sadult_rp <- rpart(income ~ ., sadult[, c("sex", "married", "educated", "income")])
+```
+```{r}
+tile_adult <- tiling(dim(sadult)[1], dim(sadult)[2])
+tile_adult$addtile(C = c(4, 5, 17)) # These columns are the same thing (education)
+tile_adult$addtile(C = c(8, 16))   # These columns are the same thing (relationship)
+```
+
+Assume that we hypothesise that sex, high vs. low education, and married vs. not married might be factors for high vs. low income. We therefore make a table.
+
+```{r}
+adult_tab <- cbind(table(sadult[,c("income","sex")]),
+                   table(sadult[,c("income","educated")]),
+                   table(sadult[,c("income","married")]))
+adult_tab
+```
+
+Then have 6 test statistics, namely the counts of various group in the high income category.
+
+```{r}
+group_counts_in_high_income <- function(x) {
+  c(table(x[, c("income", "sex")])[">50K", ],
+    table(x[, c("income", "educated")])[">50K", ],
+    table(x[, c("income", "married")])[">50K", ])
+}
+
+test_adult <- tester(sadult, 
+                     nresample = 1999, 
+                     test_stat = group_counts_in_high_income, 
+                     sample_from_null = function(x) tile_adult$permutedata(sadult))
+
+adult_pvadj <- minP(test_adult$t0, t(test_adult$t))
+adult_pvadj
+
+test_adult2 <- tester(sadult2, 
+                     nresample = 1999, 
+                     test_stat = group_counts_in_high_income, 
+                     sample_from_null = function(x) tile_adult$permutedata(sadult2))
+```
+We observe that being married correlates with high income. Lets fix the relation between married vs. income.
+
+```{r}
+tile_adult_c <- tile_adult$copy()
+tile_adult_c$addtile(R = which(sadult[,"income"]==">50K" & sadult[,"married"]=="married"),
+                     C = c(15, 16))
+
+test_adult_c <- tester(sadult, 
+                       nresample = 1999, 
+                       test_stat = group_counts_in_high_income, 
+                       sample_from_null = function(x) tile_adult_c$permutedata(sadult))
+
+adult_pvadj_fix_margins <- minP(test_adult_c$t0, t(test_adult_c$t))
+adult_pvadj_fix_margins
+```
+
+## Table 1
+
+A summary of this section (Table 1 in manuscript).
+
+```{r}
+round(rbind(adult_tab, 
+            p_adj = adult_pvadj, 
+            p_mar.fix. = adult_pvadj_fix_margins), 
+      digits = 2)
+```
+
+
+# 3.1 Leveraging the Analyst's Knowledge
+
+In this section we run the experiment with synthetic data. 
+
+* We devise a simple single-parameter model defining the analyst's level of expertise $k$ (see manuscript for details). 
+* The data consists of n real-valued numbers $x_n$. They are sampled from a standard Gaussian $N(mu=0, sd=1)$, except for $x_1$ which is sampled from $N(mu=3, sd=1)$. The assumption is that only the test statistic for x1 should be significant.
+
+```{r}
+set.seed(randseed)
+K <- seq(from=0, to=1, length=100)
+N <- c(1, 10, 25, 50, 100, 250, 500, 1000)
+n_K <- length(K)
+n_N <- length(N)
+n_surrogates <- 250
+n_rep <- 1000
+mu <- 3
+beta <- 0.5
+user_exp_res_repl <- replicate(n=n_rep, user_exp(K, N, nresample = n_surrogates, beta = beta, mu = mu)$res)
+user_exp_res <- matrix(0, nrow = n_K, ncol = n_N)
+for (i in 1:n_K) for (j in 1:n_N) user_exp_res[i, j] <- mean(user_exp_res_repl[i, j, ])
+```
+
+## Figure 2
+
+We observe that:
+
+* For high $k$ (expertise), the user finds the significant pattern (low p-value) even with increasing number of test statistics $n$.
+* For low $n$ (number of test statistics), even the non-expert user (low $k$) can find the significant pattern by chance alone.
+
+```{r 3.contour.plot, fig.width=10, fig.height=4}
+color_function <- colorRampPalette(c("white", "darkblue"))
+
+fig2 <- function() {
+  par(mar = c(4, 4, 1, 1) + 0.1,
+      cex.axis = 1.2,
+      cex.lab = 1.2)
+  filled.contour(
+    x = K,
+    y = log(N),
+    z = user_exp_res,
+    plot.axes = {
+      axis(1, at = pretty(K), label = pretty(K))
+      axis(2, at = log(N), label = N)
+    },
+    color = color_function,
+    xlab = "k",
+    ylab = "n"
+  )
+}
+
+fig2()
+```
+
+```{r fig2_pdf}
+savePDF("figures/fig2.pdf", fig2(), width = 10, height = 4)
+```
+
+# 3.2 Testing Hypotheses in Tabular Data
+
+In this section we demonstrate: 
+
+* the use of 2 test statistics: scagnostics and number of points inside a selected region.
+* the effect of constraints on the testing process.
+* the use of the framework in iterative exploration.
+
+```{r load_german}
+german_orig <- readRDS("data/socio_economics_germany_full.rds")
+german <- german_orig[, 14:45]
+german <- scale(as.matrix(german))
+german_factors <- german_orig[, 3:5]
+
+set.seed(randseed)
+split_ratio <- 0.5
+idx_split <- sample(nrow(german), size = round(nrow(german) * split_ratio))
+
+german_test <- german[-idx_split, ]
+german_viz <- german[idx_split, ]
+```
+
+```{r load_german_params}
+# Scagnostics example
+ind_vars_for_scag <- c(28, 7)
+pvec_scag <- matrix(0, nrow = ncol(german), ncol = 2)
+pvec_scag[ind_vars_for_scag[1], ] <- c(1, 0)
+pvec_scag[ind_vars_for_scag[2], ] <- c(0, 1)
+
+xy_scag <- matrix(german[, ind_vars_for_scag],
+                  ncol = 2,
+                  dimnames = list(NULL, colnames(german)[ind_vars_for_scag]))
+
+# Iteration example (t=1) (Also used in scagnostics example)
+pvec_t1 <- matrix(ncol = 2,
+                  byrow = T, 
+                  data = c(-0.20812984,0.104020433,0.05990979, -0.099812793,-0.24639380, -0.117946512,-0.11624038,-0.287016907,0.27903707,0.130979455,-0.23985513, -0.101385960,0.05940001,-0.253213364,0.19738100,0.135532251,0.14333147,0.266455176,-0.06348592,-0.273316607,0.06425944,-0.161007169,-0.27982946, -0.026321798,0.23709035,-0.082338519,0.21782876,0.049192671,-0.08232096, -0.230579644,-0.10346176,-0.179110660,-0.21100813,-0.128821268,0.13862144, -0.058078100,0.04182044,-0.001105998,0.01557894, -0.256028765,-0.21179466,0.241864953,-0.06820454,0.235701968,-0.18061247,0.211785490,-0.20709077,0.142938684,0.01938115,0.282079429,0.18008659, -0.248325281,-0.01936813,-0.046666645,0.07365535,-0.286046537,0.22844881,-0.106202163,0.13828398,-0.045914802,0.29663816,0.030275195,0.29013785,0.042963275), 
+                  dimnames = list(colnames(german_test), NULL))
+
+xy_t1 <- german_viz %*% pvec_t1
+R1_viz <- c(2,4,13,16,17,21,22,23,24,39,44,46,49,54,55,63,78,79,86,92,93,98,99,100,104,109,110,111,120,134,140,143,149,175,189,197,204)
+R1_viz_chull_t1 <- convhull_subset(xy_t1, R1_viz)
+R1_test <- points_in_selection(german_test %*% pvec_t1, R1_viz_chull_t1)
+
+# Iteration example (t=2)
+pvec_t2 <- matrix(ncol = 2, 
+                  byrow = T, 
+                  data = c(-0.182898728,0.046784628,0.086336015,-0.290675215,-0.097171720,0.089453203,0.146354042,0.196681478,0.237927378,0.090368043,-0.145360710,-0.089451254,0.211901628,0.086380488,0.065868274,-0.395870364,-0.185631925,-0.106229409,0.153883305,0.299982364,0.137294777,0.083407338,-0.281658636,-0.118886857,0.225993505,0.146757383,0.128587587,-0.308107602,0.101163722,0.187058399,0.044837537,0.120987483,-0.072485055,0.136796134,0.123300841,-0.145878983,0.024676426,-0.097395808,0.187339783,0.187941587,-0.266937912,-0.011652182,-0.184139352,-0.202973244,-0.239467629,0.049770157,-0.218674164,0.149115730,-0.209912778,-0.043875803,0.245354418,-0.048478112,0.004498666,-0.006959673,0.227218980,0.118740846,0.216991342,-0.200672373,0.119424376,-0.216416438,0.195314932,-0.347961240,0.207808410,-0.142741432),
+                  dimnames = list(colnames(german_test), NULL))
+
+xy_t2 <- german_viz %*% pvec_t2
+xy_t2_in_R1 <- german_viz[R1_viz, ] %*% pvec_t2
+R2_viz <-c(1,3,10,28,31,34,35,37,42,50,51,53,59,62,64,65,66,70,72,73,75,77,80,81,83,89,90,97,102,106,113,119,122,123,129,131,136,137,145,147,157,163,164,170,179,180,181,190,195,201,202,203,206)
+R2_viz_chull_t2 <- convhull_subset(xy_t2, R2_viz)
+R2_test <- points_in_selection(german_test %*% pvec_t2, R2_viz_chull_t2)
+
+# Tiles are used for constrained randomization of the data. They enable sampling datasets with the same marginal distributions as the original data, or the same marginal distributions constrained by a pattern to enable iterative exploration.
+# uc: unconstrained
+tile_uc <- tiling(n = nrow(german_test), m = ncol(german_test))
+tile_uc_full <- tiling(n = nrow(german), m = ncol(german))
+```
+
+## 3.2.1 Scagnostics as Test Statistics
+
+### Figure 3
+
+We choose an axis-aligned projection of the data and compute its scagnostics.
+
+We then run a statistical test with: 
+
+* scagnostics as a test statistic
+* independent column permutations as a null distribution
+
+Since we have multiple test statistics (i.e. multiple hypotheses), the computed p-values are adjusted (with minP correction).
+
+```{r fig.asp=1, fig.width=2}
+fig3 <- function() {
+  plott(xy_scag)
+  title(xlab = colnames(german)[ind_vars_for_scag][1],
+        ylab = colnames(german)[ind_vars_for_scag][2], 
+        line = 0, 
+        cex.lab = 0.5)
+}
+
+fig3()
+```
+
+```{r}
+set.seed(randseed)
+test_german_scag_uc <- tester(data = german, 
+                              nresample = 1000, 
+                              test_stat = scagnosticss, 
+                              sample_from_null = function() tile_uc_full$permutedata(german), 
+                              pvec = pvec_scag)
+
+test_german_scag_uc_res <- results(test_german_scag_uc)
+test_german_scag_uc_res
+```
+
+```{r fig3_pdf}
+savePDF("figures/fig3.pdf", fig3(), width = 2, height = 2)
+```
+
+### Figure 4a
+
+Here we repeat the procedure for a a projection of the data on its first two principal components.
+
+```{r fig.asp=1, fig.width=2}
+plott(xy_t1)
+```
+
+```{r}
+set.seed(randseed)
+
+test_german_scag_t1_uc <- tester(german_test, 
+                                 nresample = 1000, 
+                                 test_stat = scagnosticss, 
+                                 sample_from_null = function() tile_uc$permutedata(german_test), 
+                                 pvec = pvec_t1)
+
+test_german_scag_t1_uc_res <- results(test_german_scag_t1_uc)
+test_german_scag_t1_uc_res
+```
+
+## 3.2.2 Effect of Constraints
+
+When we add a constraint on the relationship of the x- and y-axes in Figure 3, all scagnostics are insignificant.
+
+```{r}
+tile_scag <- tile_uc_full$copy()
+tile_scag$addtile(C = ind_vars_for_scag)
+```
+
+```{r}
+set.seed(randseed)
+
+test_german_scag_c <- tester(data = german, 
+                             nresample = 1000, 
+                             test_stat = scagnosticss, 
+                             sample_from_null = function() tile_scag$permutedata(german), 
+                             pvec = pvec_scag)
+set.seed(randseed)
+
+test_german_scag_c_res <- results(test_german_scag_c)
+test_german_scag_c_res
+```
+
+### Table 2
+
+Summary of this section (Table 2 in manuscript).
+
+```{r}
+set.seed(randseed)
+round(t(rbind(`T (Fig3)` = test_german_scag_uc$t0,
+              `p_u (Fig3)` = test_german_scag_uc_res[,2],
+              `p_c (Fig3)` = test_german_scag_c_res[,2],
+              `T (Fig4a)` = test_german_scag_t1_uc$t0,
+              `p_u (Fig4a)` = test_german_scag_t1_uc_res[,2])), 
+      digits = 2)
+```
+
+## 3.2.3 Iterative Exploration
+
+Instead of scagnostics, here we use as a test statistic the number of points inside a region. Furthermore, we demonstrate a multiple hypotheses correction for an iterative exploration scenario.
+
+We consider two patterns found in the data:
+
+* R1: Rural areas in the East region
+* R2: Urban areas
+
+```{r}
+german_factors_test <- german_factors[-idx_split, ]
+summary(german_factors_test[R1_test, ]) # Rural East
+summary(german_factors_test[R2_test, ]) # Urban
+```
+
+### Figure 4a
+
+We again consider the PCA projection from before. Now we observe a cluster $R_1$ and want to know whether it is significant or a random artifact of the data.
+
+```{r fig.asp=1, fig.width=2}
+fig4a <- function() {
+  plott(xy_t1)
+  plot_pol(R1_viz_chull_t1)
+}
+
+fig4a()
+```
+
+```{r fig4_pdf}
+savePDF("figures/fig4a.pdf", fig4a(), width = 2, height = 2)
+```
+
+The x and y axes in this view have the following combination of variables (5 largest absolute weights): 
+
+```{r}
+i_t1 <- head(order(abs(pvec_t1[, 1]), decreasing = T), 5)
+j_t1 <- head(order(abs(pvec_t1[, 2]), decreasing = T), 5)
+data.frame(
+  x = rownames(pvec_t1)[i_t1],
+  w_x = round(pvec_t1[i_t1, 1], 2),
+  y = rownames(pvec_t1)[j_t1],
+  w_y = round(pvec_t1[j_t1, 2], 2)
+)
+```
+
+We use as a test statistic the number of points inside the marked region and as a null distribution (again) independent column permutations.  
+
+The observed pattern has an iteration-adjusted p-value of:
+
+```{r}
+# unconstrained null model
+set.seed(randseed)
+
+test_R1_t1_uc <- tester(german_test, 
+                        nresample = 1000, 
+                        test_stat = num_points_in_selection, 
+                        sample_from_null = function() tile_uc$permutedata(german_test), 
+                        pvec = pvec_t1, 
+                        region = R1_viz_chull_t1)
+
+pv_adj_iter(pvalue(test_R1_t1_uc), t = 1)
+```
+
+When we constrain the null distribution by the selected points, the pattern is no longer significant, hence it has a p-value:
+
+```{r}
+set.seed(randseed)
+
+tile_R1 <- tile_uc$copy()
+tile_R1$addtile(R = R1_test)
+
+test_R1_t1_cR1 <- tester(german_test, 
+                         nresample = 1000, 
+                         test_stat = num_points_in_selection, 
+                         sample_from_null = function() tile_R1$permutedata(german_test), 
+                         pvec = pvec_t1, 
+                         region = R1_viz_chull_t1)
+
+pv_adj_iter(pvalue(test_R1_t1_cR1), t = 1)
+```
+
+
+### Figure 4b
+
+This view is obtained by adding the previously observed pattern to the *background distribution*. The previously observed pattern $R_1$ is marked with red crosses. 
+
+Suppose we observe a new pattern $R_2$ (marked with a polygon) and want to know whether it is significant. 
+
+* The test statistic in this case is again the number of points inside the region.
+* The null distribution is the same as in the previous step, with an added constraint on the first observed pattern $R_1$.
+* Because this is the second iteration step, we apply the iteration correction for multiple hypotheses.
+
+```{r fig.asp=1, fig.width=2}
+fig4b <- function() {
+  plott(xy_t2)
+  points(xy_t2_in_R1, col = rgb(0.8, 0, 0, 0.5), pch = 4, cex = 0.4)
+  plot_pol(R2_viz_chull_t2)  
+}
+
+fig4b()
+```
+
+The x and y axes in this view have the following combination of variables (5 largest absolute weights): 
+
+```{r}
+i_t2 <- head(order(abs(pvec_t2[, 1]), decreasing = T), 5)
+j_t2 <- head(order(abs(pvec_t2[, 2]), decreasing = T), 5)
+data.frame(
+  x = rownames(pvec_t2)[i_t2],
+  w_x = round(pvec_t2[i_t2, 1], 2),
+  y = rownames(pvec_t2)[j_t2],
+  w_y = round(pvec_t2[j_t2, 2], 2)
+)
+```
+
+```{r fig4b_pdf}
+savePDF("figures/fig4b.pdf", fig4b(), width = 2, height = 2)
+```
+
+We hence get an iteration-adjusted p-value of:
+
+```{r}
+set.seed(randseed)
+
+test_R2_t2_cR1 <- tester(german_test, 
+                         nresample = 1000, 
+                         test_stat = num_points_in_selection, 
+                         sample_from_null = function() tile_R1$permutedata(german_test), 
+                         pvec = pvec_t2, 
+                         region = R2_viz_chull_t2)
+
+pv_adj_iter(pvalue(test_R2_t2_cR1), t=2)
+```
+
+# 3.3 Testing Hypotheses in Time Series
+
+Here we demonstrate: 
+
+* a null model for time series based on sampling from historical surrogates.
+* a test statistic based on the difference in an interval [a,b].
+
+```{r load_ts_history, fig.width=4, fig.height=2}
+set.seed(randseed)
+ind_day2 <- 151:174
+x_day2 <- AQ_time[ind_day2]
+y_day2 <- AQ_CO[ind_day2]
+a <- 8 # 7am
+b <- 10 # 9am
+
+workdays <- as.POSIXlt(AQ_time, origin="1970-01-01")$wday %in% 1:5
+sample_workday_AQ <- function() {
+  unlist(make_sample_full_days(
+    make_sample_days(
+      data.frame(
+        time=as.POSIXct(AQ_time, origin="1970-01-01"), 
+        `CO.GT.` = AQ_CO)[workdays, ]
+    ), 
+    day_length = 24)()["CO.GT."]) 
+}
+
+fig5 <- function() {
+  plottime(x_day2, y_day2, 
+           x_test = x_day2, 
+           f = replicate(n=25, sample_workday_AQ(), simplify = T), 
+           mar=c(2, 1, 0, 1) + 0.1)
+  abline(v = x_day2[c(a,b)], lty = 2, col = "blue", lwd = 2)
+}
+
+fig5()
+```
+
+A naive testing procedure, using as a test statistic the difference between $a$ and $b$ for the marked interval gives a p-value of: 
+
+```{r warning=FALSE}
+set.seed(randseed)
+
+diff_in_interval <- function(data, t1 = a, t2 = b) data[t2] - data[t1] 
+
+test_ts_diff <- tester(y_day2, 
+                       nresample = 1000, 
+                       test_stat = diff_in_interval, 
+                       sample_from_null = sample_workday_AQ)
+
+pvalue(test_ts_diff)
+```
+
+If we instead use as a test statistic all possible intervals of length 2 then for the interval in question we get a minP-adjusted p-value of: 
+
+```{r }
+set.seed(randseed)
+
+diff_in_intervals_length_L <- function(x) apply_to_intervals(as.matrix(x),
+                                                             f = diff_in_interval,
+                                                             L = 2,
+                                                             returnNamed = T)
+
+test_ts_diff2 <- tester(y_day2, 
+                        nresample = 1000, 
+                        test_stat = diff_in_intervals_length_L, 
+                        sample_from_null = sample_workday_AQ)
+test_ts_diff2$t[is.na(test_ts_diff2$t)] <- Inf
+test_ts_diff2$t0[is.na(test_ts_diff2$t0)] <- Inf
+minP(test_ts_diff2$t0, t(test_ts_diff2$t))[paste0(a,"_",b)]
+```
+
+
+```{r fig5_pdf}
+savePDF("figures/fig5.pdf", fig5(), width = 4, height = 2)
+```

@@ -2,8 +2,6 @@ library(dplyr)
 library(ggplot2)
 library(tidyr)
 library(lubridate)
-library(readr)
-library(forcats)
 
 #' Formatted time series plot
 #'
@@ -96,8 +94,6 @@ scatterplot_gg <- function(mat, surrogates=NULL, polygon=NULL) {
 #' @export
 #'
 #' @examples
-#' banana = get_smear(tab="HYY_DMPS", params=list(from = "2018-04-01", to = "2018-04-30"))
-#' plot_banana(banana, "2018-04-20")
 plot_banana <- function(data, day = min(data$timestamp)) {
   stopifnot("timestamp" %in% names(data))
   j_particles = grepl("^d\\d+", names(data)) # Columns with particle concentration
@@ -237,6 +233,63 @@ plot_test_stat = function(t_obs, t_null, jitter=F, show_x_labels=F) {
     geom_point(aes(x=1:length(t_obs), y=t_obs)) + 
     gg_x_axis + 
     gg_x_axis_rotate_labels
+}
+
+#' Plot spectrum
+#'
+#' @param f vector of n frequencies
+#' @param y vector length n. Spectrum values for f.
+#' @param surrogates nXm matrix 
+#'
+#' @return ggplot
+#' @export
+#'
+#' @examples
+plot_spectrum <- function(f, y, surrogates = NULL) {
+  df = data.frame(f = f, 
+                  y = y)
+  gg_surrogates = NULL
+  if (!is.null(surrogates)) {
+    df_surrogates = surrogates %>% 
+      as.data.frame() %>% 
+      mutate(f=df$f) %>% 
+      pivot_longer(-f)
+    gg_surrogates = geom_line(data=df_surrogates, aes(f, value, group=name), col="grey", alpha=0.5)
+  }
+  ggplot(df) + 
+    gg_surrogates + 
+    geom_line(aes(f, y), lwd=1) + 
+    scale_y_log10() + 
+    scale_x_log10() + 
+    theme_classic() + 
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank()) +
+    labs(y="", x="") 
+}
+
+#' Histogram
+#'
+#' @param obs 
+#' @param null_sample 
+#' @param breaks 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+plot_hist = function(obs, null_samples, breaks) {
+  # df = data.frame(id=1:length(obs), obs=obs)
+  df_samples = data.frame(id=1:length(obs), null=null_samples)
+  df_samples_long = pivot_longer(df_samples, -id)
+  ggplot(data.frame(obs=obs)) + 
+    # geom_histogram(aes(value, after_stat(density), fill=name, color=name), 
+    #                alpha=0.7, position = "identity", breaks=breaks) +
+    geom_histogram(aes(value, after_stat(density), group=name), data=df_samples_long, 
+                   alpha=0.1, fill="lightgrey", breaks=breaks, position="identity") + 
+    geom_histogram(aes(obs, after_stat(density)), color="black", fill=NA, breaks=breaks) +
+    theme_minimal() + 
+    theme(legend.position = "none") + 
+    labs(x="", y="")
 }
 
 # Utilities ####

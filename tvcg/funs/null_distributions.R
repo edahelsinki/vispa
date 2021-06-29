@@ -290,22 +290,3 @@ tiling <- function(n,m,Tm=NULL,Tl=NULL,count=NULL,df=function(x) paste(x,collaps
        twocolumn=twocolumn,
        status=function() list(n=n,m=m,Tm=Tm,Tl=Tl,count=count))
 }
-
-#' Wrapper for faster use of tiling with data frames and matrices
-#'
-#' @param X data frame or matrix
-#'
-#' @return see [tiling()]
-#' @export
-#'
-#' @examples
-#' tt = tiling_df(iris)
-#' head(tt$status()$Tm)
-tiling_df <- function(X) {
-  n = nrow(X)
-  m = ncol(X)
-  Tm = matrix(as.character(rep(1:m, each = n)), nrow = n, ncol = m)
-  colnames(Tm) = colnames(X)
-  rownames(Tm) = rownames(X)
-  tiling(n = n, m = m, Tm = Tm)
-}

@@ -1,0 +1,164 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r}
+library(ggpubr)
+source("funs/read_data.R")
+source("funs/plot.R")
+source("funs/null_distributions.R")
+source("funs/banana_utils.R")
+source("funs/pvalue.R")
+source("funs/tester.R")
+source("funs/test_statistics.R")
+DIR_FIGURES = ""
+```
+
+# Time series random noise
+
+```{r}
+set.seed(1234)
+df = data.frame(x=1:100, y=rnorm(100))
+
+fig_noise = ggplot(df) + 
+  geom_line(aes(x,y)) + 
+  geom_hline(aes(yintercept=2), lty=2) + 
+  theme_void()
+fig_noise
+
+# ggsave(file.path(DIR_FIGURES, "example_noise.pdf"), fig_noise, width=7, height=4)
+```
+
+
+# Example of within vs between
+
+```{r}
+df = data.frame(x=1:6, y=c(1,2,3,2,7,0), V=paste0("V", 1:6))
+df_rect = data.frame(xmin=df$x-0.45, xmax=df$x+0.45, ymin=-0.5, ymax=7.5)
+
+fig_within_between = ggplot(df) + 
+  geom_point(aes(x,y), size=3, fill="darkblue") + 
+  geom_line(aes(x,y), color="black", lwd=1) + 
+  theme_void() + 
+  xlim(c(min(df$x)-1, max(df$x)+1)) + 
+  ylim(c(min(df$y)-1, max(df$y)+1))
+
+fig_within_between_both = ggarrange(
+  fig_within_between + 
+    geom_rect(aes(xmin=min(x)-0.5, xmax=max(x)+0.5, ymin=min(y)-0.5, ymax=max(y)+0.5), 
+              fill=NA, color="black", lwd=0.2) + 
+    geom_text(aes(x=mean(x), y=max(y)+1, label="V1"), size=6), 
+  fig_within_between + 
+    geom_rect(aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax), 
+              fill=NA, color="black", lwd=0.2, data=df_rect) + 
+    geom_text(aes(x=x, y=max(y)+1, label=V), size=6), 
+  nrow=1
+)
+
+fig_within_between_both
+# ggsave(file.path(DIR_FIGURES, "example_within_between.pdf"), fig_within_between_both, width=7, height=2)
+```
+
+# Comparison figure
+
+```{r}
+set.seed(2021)
+d = data.frame(t=rnorm(1000))
+t_obs = quantile(d$t, 0.95)
+d$pos = factor(ifelse(d$t>=t_obs, "higher", "lower"))
+fig_pvalue = ggplot(d, aes(x=t)) + 
+  labs(title="", x="", y="") +
+  theme_void() + 
+  theme(legend.position = "none") + 
+  scale_fill_manual(values = c("higher"="black", "lower"="darkgray"))
+
+fig_pvalue_empirical = fig_pvalue + 
+  geom_histogram(aes(fill=pos), bins=50, boundary=t_obs) + 
+  geom_segment(aes(x = t_obs, xend=t_obs, y=0, yend=Inf), lty=2)
+fig_pvalue_analytical = fig_pvalue + 
+  geom_density(fill="black") + 
+  geom_rect(aes(xmin= -Inf, xmax=t_obs, ymin=0, ymax=Inf), fill="white") + 
+  geom_density(fill="black", alpha=0.3) + 
+  geom_segment(aes(x = t_obs, xend=t_obs, y=0, yend=Inf), lty=2)
+fig_pvalue = ggarrange(fig_pvalue_analytical, 
+                       fig_pvalue_empirical, 
+                       nrow=1)
+fig_pvalue
+```
+
+```{r}
+n=30 # Number of data points 
+m=5 # Number of null datasets
+y_obs = seq(-3, 2, length.out=n) + rep(c(0,2), each=n/2) + sin(1.5*1:n)
+set.seed(2021)
+df_null_data = data.frame(x=rep(1:n, m), y=rnorm(n*m), null=rep(1:m, each=n))
+df_obs = data.frame(x = 1:n, y = y_obs)
+
+fig_lineup = ggarrange(
+  ggplot(rbind(cbind(df_obs, null="obs", is_obs="obs"), 
+             cbind(df_null_data, is_obs="null"))) + 
+  geom_line(aes(x, y, col=is_obs)) + 
+  facet_wrap(~null, nrow=1) + 
+  scale_color_manual(values=c("obs"="black", "null"="grey")) + 
+  theme_void() + 
+  theme(legend.position = "none") + 
+  theme(panel.background = element_rect(size=1, fill=NA), 
+        strip.text = element_blank(), 
+        plot.margin = unit(c(0, 0.1, 0, 0), "cm"))
+) # Wrapping in ggarrange to have the same tag font with the other ggarrange figures.
+
+fig_lineup
+```
+
+```{r}
+m=1000 # Number of null datasets
+set.seed(2021)
+null_data = matrix(rnorm(n*m), nrow=n, ncol=m)
+df_null_data = data.frame(x=rep(1:n, m), y=rnorm(n*m), null=rep(1:m, each=n))
+
+plot_vispa = function(df, df_null) {
+  ggplot(df) + 
+    geom_line(aes(x, y, group=null), data=df_null, col="grey", alpha=0.6) + 
+    geom_line(aes(x, y), lwd=0.8) + 
+    theme_void() + 
+    theme(legend.position =  "none", 
+          panel.background = element_rect(size=1), 
+          plot.margin = unit(c(0.3, 0.1, 0, 0.1), "cm"), 
+          plot.title = element_text(hjust=0.5))
+}
+test_stat = function(y) scale(c(y[length(y)]-y[1], diff(y), periodicity(y)[-1]))
+diff_names = function(y_obs) {paste0(2:length(y_obs), "-", 1:(length(y_obs)-1))}
+test_stat_names = function(y) c("trend", diff_names(y), paste0("T", round(1/periodicity_names(y)[-1])))
+t_obs = setNames(test_stat(df_obs$y), test_stat_names(df_obs$y))
+t_null = apply(null_data, 2, test_stat)
+pvalues = minP(t_obs, t_null)
+fig_vispa = ggarrange(
+  plot_vispa(df_obs, df_null_data[1:(n*10), ]), 
+  plot_test_stat(t_obs, t_null, show_x_labels = TRUE) + 
+    theme_void() + 
+    theme(axis.text.x = element_text(size=5, angle = 90, hjust = 1), 
+          plot.margin = unit(c(0,0,0.3,0), "cm")) + 
+    labs(y="") , 
+  nrow=1)
+
+fig_vispa
+```
+
+
+
+```{r}
+fig_comparison = ggarrange(
+  fig_pvalue + labs(tag="(a)") + theme(plot.tag = element_text(size=10), plot.tag.position = "left"), 
+  fig_lineup + labs(tag="(b)") + theme(plot.tag = element_text(size=10), plot.tag.position = "left"), 
+  fig_vispa + labs(tag="(c)") + theme(plot.tag = element_text(size=10), plot.tag.position = "left"),
+  heights = c(1, 1, 2),
+  nrow=3)
+
+fig_comparison
+
+# ggsave(file.path(DIR_FIGURES, "comparison.pdf"), fig_comparison, height=4, width=6)
+```

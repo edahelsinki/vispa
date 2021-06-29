@@ -29,59 +29,69 @@ read_aq <- function(file = "data/AirQualityUCI.csv") {
   AQ[ , j]
 }
 
-#' Read SMEAR datasets
+#' Download and prepare smear data
 #'
-#' @param data_file RDS file of particle concentration data over time.
-#' The first column is a timestamp, and the rest are are particle concentrations
-#' (d100e1 means Particle concentration dNdlogDp Dp=1.00nm)
-#' @param event_data_file RDS file of event classification data
+#' @param file_smear 
+#' @param file_smear_raw 
+#' @param file_events 
 #'
-#' @return list of two data frames
-read_smear <- function(data_file = "data/smear_2010.rds", event_data_file = "data/smear_2010_events.rds") {
-  smear_data <- readRDS(data_file) 
-  colnames(smear_data) = gsub("HYY_DMPS.", "", colnames(smear_data))
-  smear_events <- readRDS(event_data_file) # This dataset is not public.
-  
-  list(data = smear_data, 
-       events = smear_events, 
-       i_non_event = smear_events %in% "non.event", 
-       i_event = smear_events %in% c("event.Ia", "event.Ib"))
+#' @return
+#' @export
+#'
+#' @examples
+check_smear = function(file_smear="data/smear.rds", 
+                       file_smear_raw="data/smear_raw.rds", 
+                       file_events="data/DMPS_Event_Classification.txt") {
+  if (!file.exists(file_smear)) {
+    if (!file.exists(file_smear_raw))  {
+      cat("Downloading data from SMEAR API (225MB)...\n")
+      # Apparently there is some new unspecified limit for how much data to download per request.
+      dates = seq(as.Date("1996-01-20"), as.Date("2018-12-31"), by=50)
+      D = list() 
+      for (i in 1:(length(dates)-1)) {
+        print(sprintf("%d/%d from %s to %s", i, (length(dates)-1), dates[i], dates[i+1]))
+        D[[i]] = get_smear_dmps(dates[i], dates[i+1])
+      }
+      raw = Reduce(rbind, D, init=data.frame())
+      cat("Saving to", file_smear_raw, "\n")
+      saveRDS(raw, file_smear_raw) 
+    }
+    cat("Preparing raw SMEAR data...\n")
+    d = prepare_smear(file_smear_raw, file_events)
+    cat("Saving to", file_smear, "\n")
+    saveRDS(d, file_smear)
+  }
 }
 
-#' Read SMEAR datasets
+#' Prepare SMEAR data
 #'
-#' @param data_file RDS file of particle concentration data over time.
+#' @param file_smear_raw RDS file of particle concentration data over time.
 #' The first column is a timestamp, and the rest are are particle concentrations
 #' (d100e1 means Particle concentration dNdlogDp Dp=1.00nm)
-#' @param event_data_file txt file of event classification data
+#' @param file_events txt file of event classification data
 #'
 #' @return list of two data frames
-read_smear_all <- function(data_file = "../ideas-for-smear-data/data/banana-data.rds", 
-                           event_data_file = "../ideas-for-smear-data/data/DMPS_Event_Classification.txt") {
-  if (file.exists(data_file)) {
-    smear_data <- readRDS(data_file) 
-  } else {
-    cat("Downloading data from SMEAR API...\n")
-    smear_data <- get_smear_dmps(from="1996-01-20", to="2018-12-31") # 225 MB
-    cat("Saving data to", data_file)
-    saveRDS(smear_data, data_file) 
-  }
-  smear_data = smear_data[!is.na(smear_data$timestamp), ]
-  smear_data = smear_data[apply(smear_data[,-1], 1, function(x) !all(is.na(x))), ]
-  colnames(smear_data) = gsub("HYY_DMPS.", "", colnames(smear_data))
-  events = read_smear_events(event_data_file)
+prepare_smear <- function(file_smear_raw = "data/smear_raw.rds", 
+                          file_events = "data/DMPS_Event_Classification.txt") {
+  stopifnot(file.exists(file_smear_raw), file.exists(file_events))
+  d = readRDS(file_smear_raw)
+  d = d[,sapply(d, function(x) !all(is.na(x)))]
+  events = read_smear_events(file_events)
+  d = d[!is.na(d$timestamp), ]
+  d = d[apply(d[,-1], 1, function(x) !all(is.na(x))), ]
+  colnames(d) = gsub("HYY_DMPS.", "", colnames(d))
   non_event_days = strftime(events[events$type == "non.event",]$timestamp, "%Y-%m-%d")
-  i_non_event = strftime(smear_data$timestamp, "%Y-%m-%d") %in% non_event_days
+  i_non_event = strftime(d$timestamp, "%Y-%m-%d") %in% non_event_days
   event_days = strftime(events[events$type == c("event.Ia", "event.Ib"),]$timestamp, "%Y-%m-%d")
-  i_event = strftime(smear_data$timestamp, "%Y-%m-%d") %in% event_days
+  i_event = strftime(d$timestamp, "%Y-%m-%d") %in% event_days
   
-  list(data = smear_data, 
+  list(data = d, 
        events = events, 
        i_non_event = i_non_event, 
        i_event = i_event)
 }
 
-#' Read and clean event classification
+#' Read and clean SMEAR event classification
 #'
 #' @param path_to_events path to DMPS_Event_Classification.txt
 #'
@@ -100,7 +110,8 @@ read_smear_events <- function(path_to_events="data/DMPS_Event_Classification.txt
 
 #' Get data for bananaplot from SMEAR API
 #' 
-#' Download measurements from the SMEAR API https://avaa.tdata.fi/web/smart/smear/api
+#' Download measurements from the SMEAR API:  
+#' https://smear-backend.rahtiapp.fi/swagger-ui/#/default/get_search_timeseries_csv
 #'
 #' @param from,to dates as %Y-%m-%d
 #'
@@ -108,36 +119,34 @@ read_smear_events <- function(path_to_events="data/DMPS_Event_Classification.txt
 #' @export
 #'
 #' @examples
-#' d = get_smear_dmps("2010-01-01", "2010-01-03")
+#' d = get_smear_dmps("2010-01-01", "2010-12-31")
 get_smear_dmps <- function(from, to) {
-  format_date <- function(d) paste0(format(as.POSIXct(d, origin="1970-01-01"), 
-                                           format = "%Y-%m-%d"), "%20", 
-                                    format(as.POSIXct(d, origin="1970-01-01"), 
-                                           format = "%H:%M:%S"))
-  varnames = c("d100e1", "d112e1",
-               "d126e1", "d141e1", "d158e1", "d178e1", "d200e1", "d224e1", "d251e1",
-               "d282e1", "d316e1", "d355e1", "d398e1", "d447e1", "d501e1", "d562e1",
-               "d631e1", "d708e1", "d794e1", "d891e1", "d100e2", "d112e2", "d126e2",
-               "d141e2", "d158e2", "d178e2", "d200e2", "d224e2", "d251e2", "d282e2",
-               "d316e2", "d355e2", "d398e2", "d447e2", "d501e2", "d562e2", "d631e2",
-               "d708e2", "d794e2", "d891e2", "d100e3", "d112e3", "d126e3", "d141e3",
-               "d158e3", "d178e3", "d200e3", "d224e3", "d251e3", "d282e3", "d316e3",
-               "d355e3", "d398e3", "d447e3", "d501e3", "d562e3", "d631e3", "d708e3",
-               "d794e3", "d891e3", "d100e4")
-  url <- paste0("https://avaa.tdata.fi/smear-services/smeardata.jsp?",
-                "table=HYY_DMPS",
-                "&variables=", paste(varnames, collapse=","),
-                "&from=", format_date(from),
-                "&to=", format_date(to),
-                "&quality=any",
-                "&averaging=none",
-                "&type=arithmetic",
-                "&format=csv")
-  data = read.csv(url, stringsAsFactors = F)
+  # Timestamp in ISO 8601 format 
+  format_ts = function(x) gsub(":", "%3A", strftime(x, format="%FT%T.000"))
+  varnames = c("d100e1", "d112e1", "d126e1", "d141e1", "d158e1", "d178e1",
+               "d200e1", "d224e1", "d251e1", "d282e1", "d316e1", "d355e1", "d398e1",
+               "d447e1", "d501e1", "d562e1", "d631e1", "d708e1", "d794e1", "d891e1",
+               "d100e2", "d112e2", "d126e2", "d141e2", "d158e2", "d178e2", "d200e2",
+               "d224e2", "d251e2", "d282e2", "d316e2", "d355e2", "d398e2", "d447e2",
+               "d501e2", "d562e2", "d631e2", "d708e2", "d794e2", "d891e2", "d100e3",
+               "d112e3", "d126e3", "d141e3", "d158e3", "d178e3", "d200e3", "d224e3",
+               "d251e3", "d282e3", "d316e3", "d355e3", "d398e3", "d447e3", "d501e3",
+               "d562e3", "d631e3", "d708e3", "d794e3", "d891e3", "d100e4")
+  var_query = paste0("&tablevariable=HYY_DMPS.", varnames, collapse="")
+  url = paste0("https://smear-backend.rahtiapp.fi/search/timeseries/csv?",
+               "aggregation=ARITHMETIC", 
+               "&from=", format_ts(from),
+               "&to=", format_ts(to),
+               "&interval=10", 
+               "&quality=ANY",
+               var_query)
+  data = read.csv(url, stringsAsFactors = FALSE)
   timestamp <- with(data, as.POSIXct(paste(Year, Month, Day, Hour, Minute, Second), 
                                      format = "%Y %m %d %H %M %OS"))
   vars_keep = setdiff(names(data), 
-                      c(names(data)[sapply(data, function(x) all(is.na(x)))], 
-                        "Year", "Month", "Day", "Hour", "Minute", "Second"))
-  cbind(timestamp=timestamp, data[ , vars_keep])
+                      #c(names(data)[sapply(data, function(x) all(is.na(x)))], 
+                      c("Year", "Month", "Day", "Hour", "Minute", "Second"))
+  d = cbind(timestamp=timestamp, data[ , vars_keep])
+  j_ordered = names(d)[-1][order(as.numeric(gsub("HYY_DMPS.d", "", names(d)[-1], fixed=T)))]
+  d[,c("timestamp", j_ordered)]
 }

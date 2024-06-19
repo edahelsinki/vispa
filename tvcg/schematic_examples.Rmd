@@ -15,7 +15,8 @@ source("funs/banana_utils.R")
 source("funs/pvalue.R")
 source("funs/tester.R")
 source("funs/test_statistics.R")
-DIR_FIGURES = ""
+DIR_FIGURES = "figures"
+if (!dir.exists(DIR_FIGURES)) dir.create(DIR_FIGURES, recursive = TRUE)
 ```
 
 # Time series random noise
@@ -30,7 +31,7 @@ fig_noise = ggplot(df) +
   theme_void()
 fig_noise
 
-# ggsave(file.path(DIR_FIGURES, "example_noise.pdf"), fig_noise, width=7, height=4)
+ggsave(file.path(DIR_FIGURES, "example_noise.pdf"), fig_noise, width=7, height=4)
 ```
 
 
@@ -60,7 +61,7 @@ fig_within_between_both = ggarrange(
 )
 
 fig_within_between_both
-# ggsave(file.path(DIR_FIGURES, "example_within_between.pdf"), fig_within_between_both, width=7, height=2)
+ggsave(file.path(DIR_FIGURES, "example_within_between.pdf"), fig_within_between_both, width=7, height=2)
 ```
 
 # Comparison figure
@@ -157,8 +158,7 @@ fig_comparison = ggarrange(
   fig_vispa + labs(tag="(c)") + theme(plot.tag = element_text(size=10), plot.tag.position = "left"),
   heights = c(1, 1, 2),
   nrow=3)
-
 fig_comparison
 
-# ggsave(file.path(DIR_FIGURES, "comparison.pdf"), fig_comparison, height=4, width=6)
+ggsave(file.path(DIR_FIGURES, "comparison.pdf"), fig_comparison, height=4, width=6)
 ```

@@ -19,7 +19,8 @@ source("funs/banana_utils.R")
 source("funs/pvalue.R")
 source("funs/tester.R")
 source("funs/test_statistics.R")
-DIR_FIGURES = ""
+DIR_FIGURES = "figures"
+if (!dir.exists(DIR_FIGURES)) dir.create(DIR_FIGURES, recursive = TRUE)
 aq = read_aq("data/AirQualityUCI.csv")
 german = read_german("data/socio_economics_germany_full.rds")
 smear = readRDS("data/smear.rds")
@@ -32,7 +33,6 @@ aq_hist = aq$T
 aq_hist = aq_hist[!is.na(aq_hist)]
 aq_breaks = seq(-4, 4, length.out=30)
 
-sample_aq_hist = function(n=length(aq_hist)) rnorm(n)
 sample_aq_hist = function(n=length(aq_hist), m=min(aq_hist), M=max(aq_hist)) runif(n, m, M)
 
 set.seed(2021)
@@ -45,8 +45,10 @@ fig_aq_hist = plot_hist(aq_hist, aq_hist_nulls[,1:10], breaks=aq_breaks) +
   geom_rug(aes(x=signif), data=data.frame(signif=(aq_breaks[-length(aq_breaks)] + diff(aq_breaks)/2)[aq_hist_pv<=0.1]))
 fig_aq_hist 
 
-# ggsave(file.path(DIR_FIGURES, "aq_hist.pdf"), fig_aq_hist, width=5, height=3)
+ggsave(file.path(DIR_FIGURES, "aq_hist.pdf"), fig_aq_hist, width=5, height=3)
 ```
+
+
 
 # Time series - Abrupt change
 
@@ -94,7 +96,7 @@ fig_ts_history_combined = ggpubr::ggarrange(fig_ts_history +
                                                     plot.tag = element_text(margin = margin(0, 15, 70, 0))), 
                                             nrow=3, legend="bottom")
 fig_ts_history_combined
-#ggsave(file.path(DIR_FIGURES, "ts-history-combined.pdf"), fig_ts_history_combined, width=6, height=7)
+ggsave(file.path(DIR_FIGURES, "ts-history-combined.pdf"), fig_ts_history_combined, width=6, height=7)
 ```
 
 # Time series - Periodicity
@@ -105,22 +107,20 @@ aq_period = aq[i,"T"]
 
 sample_aq_period = function(n=length(aq_period)) rnorm(n)
 set.seed(2021)
-null_samples = replicate(4000, sample_aq_period())
+null_samples = replicate(5000, sample_aq_period())
 pv = minP(periodicity(aq_period), apply(null_samples, 2, periodicity))
 
 fig_aq_period = plot_ts_gg(aq[i, "timestamp"], aq_period, null_samples[,1:10])
 fig_aq_period_spectrum = plot_spectrum(1/periodicity_names(aq_period, f_s=1), # Sampling rate is f_s = 1 / 1hour.
                                        periodicity(aq_period), 
                                        apply(null_samples[,1:10], 2, periodicity))
-```
-```{r}
 fig_aq_period_all = ggpubr::ggarrange(fig_aq_period + labs(tag="(a)"), 
                                       fig_aq_period_spectrum + 
                                         labs(tag="(b)", x="Period", y="Magnitude") + 
                                         scale_x_log10(breaks=c(4, 6, 8, 12, 24)), 
                                       ncol=1)
 fig_aq_period_all
-# ggsave(file.path(DIR_FIGURES, "aq_period.pdf"), fig_aq_period_all, width=6, height=6)
+ggsave(file.path(DIR_FIGURES, "aq_period.pdf"), fig_aq_period_all, width=6, height=6)
 ```
 
 # Scatterplot - Scagnostics
@@ -134,6 +134,7 @@ set.seed(42)
 surrogates_perm <- sample_permutations(n=10)
 fig_german_skewed = scatterplot_gg(german[, j_scag], surrogates_perm)
 fig_german_skewed
+ggsave(file.path(DIR_FIGURES, "german-data-skewed.pdf"), fig_german_skewed, height=4, width=4)
 ```
 
 ```{r}
@@ -203,7 +204,7 @@ fig_german_view1 = scatterplot_gg(project(german_viz, pvec_t1),
                                   lapply(surrogates_perm_t1[1:10], function(X) project(X, pvec_t1)), 
                                   region_t1)
 fig_german_view1
-# ggsave(file.path(DIR_FIGURES, "german-view1.pdf"), fig_german_view1, width=4, height=4)
+ggsave(file.path(DIR_FIGURES, "german-view1.pdf"), fig_german_view1, width=4, height=4)
 ```
 
 ```{r}
@@ -229,7 +230,7 @@ fig_german_view2 = scatterplot_gg(df2,
                                aes(x=df2[R_region_t1_viz,1], y=df2[R_region_t1_viz,2]),
                                shape="o", size=4, col="darkred", alpha=0.6)
 fig_german_view2
-#ggsave(file.path(DIR_FIGURES, "german-view2.pdf"), fig_german_view2, width=4, height=4)
+ggsave(file.path(DIR_FIGURES, "german-view2.pdf"), fig_german_view2, width=4, height=4)
 ```
 
 ```{r}
@@ -259,7 +260,7 @@ fig_german_both = ggpubr::ggarrange(fig_german_view1 +
                                             plot.tag = element_text(margin = margin(10, 0, 0, 0))), 
                                     nrow=1)
 fig_german_both
-#ggsave(file.path(DIR_FIGURES, "german-both.pdf"), fig_german_both, width=6, height=3)
+ggsave(file.path(DIR_FIGURES, "german-both.pdf"), fig_german_both, width=6, height=3)
 ```
 
 # Heatmap - Banana shape
@@ -348,7 +349,7 @@ fig_smear = ggpubr::ggarrange(fig_smear_day1 +
                                       plot.tag = element_text(margin = margin(0, 0, 20, 0))), 
                               common.legend = T, legend="bottom", nrow=2, ncol=2)
 fig_smear
-#ggsave(file.path(DIR_FIGURES, "banana-teaser.pdf"), fig_smear, width=10, height=4)
+ggsave(file.path(DIR_FIGURES, "banana-teaser.pdf"), fig_smear, width=10, height=4)
 ```
 
 

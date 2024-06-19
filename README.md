@@ -1,11 +1,9 @@
 # Visual pattern significance
 
-## KDD19
+[kdd-experiments](kdd-experiments/) contains the source code to reproduce the experiments in:
 
-> Rafael Savvides, Andreas Henelius, Emilia Oikarinen, Kai Puolamäki. Significance of patterns in data visualizations. SIGKDD 2019 (https://doi.org/10.1145/3292500.3330994)
+> Rafael Savvides, Andreas Henelius, Emilia Oikarinen & Kai Puolamäki (2019). Significance of Patterns in Data Visualisations. Proceedings of the 25th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining. KDD ’19. Anchorage, AK, USA: Association for Computing Machinery, 1509-1517. https://doi.org/10.1145/3292500.3330994. 
 
-The code to reproduce the experiments in the above paper is located in [kdd-experiments/kdd2019-experiments.Rmd](kdd-experiments/kdd2019-experiments.Rmd). 
+[tvcg](tvcg/) contains the source code to reproduce the experiments in:
 
-## TVCG (submission)
-
-The code to reproduce the results of the TVCG submission are in [tvcg](tvcg). 
+> Rafael Savvides, Andreas Henelius, Emilia Oikarinen & Kai Puolamäki (2023). Visual Data Exploration as a Statistical Testing Procedure: Within-View and Between-View Multiple Comparisons. IEEE Transactions on Visualization and Computer Graphics. 29(9), 3937-3948. https://doi.org/10.1109/TVCG.2022.3175532.
